@@ -12,6 +12,7 @@
 
 process.env.DB_PATH = ':memory:';
 process.env.JWT_SECRET = 'test-secret';
+process.env.RATE_LIMIT_DISABLED = 'true';
 
 const test = require('node:test');
 const assert = require('node:assert/strict');

@@ -6,6 +6,9 @@
  */
 process.env.DB_PATH = ':memory:';
 process.env.JWT_SECRET = 'test-secret';
+// The suite registers and logs in many times from one IP; the production
+// limiter would throttle it. The limiter itself is covered separately.
+process.env.RATE_LIMIT_DISABLED = 'true';
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
