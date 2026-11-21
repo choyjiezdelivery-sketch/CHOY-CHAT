@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>CHOY-CHAT</title>
+    <meta name="description" content="CHOY-CHAT - a social media app for connecting, sharing and chatting." />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <h1 class="brand">CHOY<span>CHAT</span></h1>
+      <p class="tagline">Connect. Share. Chat.</p>
+    </header>
+
+    <main class="layout">
+      <section class="card">
+        <h2>New post</h2>
+        <form id="post-form">
+          <label for="author">Your handle</label>
+          <input id="author" name="author" placeholder="choy" required />
+
+          <label for="body">What's on your mind?</label>
+          <textarea id="body" name="body" rows="3" placeholder="Say something..." required></textarea>
+
+          <button type="submit">Post</button>
+        </form>
+        <p id="form-status" class="status" role="status"></p>
+      </section>
+
+      <section class="card">
+        <h2>Feed</h2>
+        <ul id="feed" class="feed">
+          <li class="empty">Loading posts...</li>
+        </ul>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <p>CHOY-CHAT scaffold &middot; <a href="/api/health">API health</a></p>
+    </footer>
+
+    <script src="./app.js" type="module"></script>
+  </body>
+</html>
