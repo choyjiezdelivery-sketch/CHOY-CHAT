@@ -10,22 +10,27 @@ const router = express.Router();
 
 const POST_SELECT = `
   SELECT p.*,
-         u.username, u.display_name, u.avatar_color,
+         u.username, u.display_name, u.avatar_color, u.avatar_url,
          (SELECT COUNT(*) FROM likes l WHERE l.post_id = p.id)    AS like_count,
-         (SELECT COUNT(*) FROM comments c WHERE c.post_id = p.id) AS comment_count
+         (SELECT COUNT(*) FROM comments c WHERE c.post_id = p.id) AS comment_count,
+         (SELECT COUNT(*) FROM shares s WHERE s.post_id = p.id)   AS share_count
   FROM posts p
   JOIN users u ON u.id = p.user_id
 `;
 
 function shape(row, viewerId) {
   if (!row) return null;
-  return {
+  const post = {
     id: row.id,
     body: row.body,
     imageUrl: row.image_url,
+    mediaType: row.media_type || 'none',
+    mediaUrl: row.media_url || row.image_url || null,
+    shareOf: row.share_of || null,
     createdAt: row.created_at,
     likeCount: row.like_count,
     commentCount: row.comment_count,
+    shareCount: row.share_count || 0,
     liked: viewerId
       ? !!db.prepare('SELECT 1 FROM likes WHERE user_id = ? AND post_id = ?').get(viewerId, row.id)
       : false,
@@ -39,8 +44,17 @@ function shape(row, viewerId) {
       username: row.username,
       displayName: row.display_name,
       avatarColor: row.avatar_color,
+      avatarUrl: row.avatar_url || null,
     },
   };
+
+  // A share carries a snapshot of the original so the client can render it
+  // without a second request.
+  if (row.share_of) {
+    const original = db.prepare(`${POST_SELECT} WHERE p.id = ?`).get(row.share_of);
+    post.original = original ? shape(original, viewerId) : null;
+  }
+  return post;
 }
 
 /** Writes the notification row and pushes it over the realtime hub. */
@@ -110,16 +124,31 @@ router.get('/:id', (req, res) => {
   res.json({ post: shape(row, req.user && req.user.id) });
 });
 
-/** POST /api/posts */
+/**
+ * POST /api/posts
+ * body: { body, mediaType: 'none'|'image'|'video', mediaUrl, imageUrl }
+ * A post may be text-only, media-only, or both.
+ */
 router.post('/', requireAuth, (req, res) => {
   const body = (req.body && req.body.body ? String(req.body.body) : '').trim();
-  const imageUrl = req.body && req.body.imageUrl ? String(req.body.imageUrl).slice(0, 500) : null;
-  if (!body) return res.status(400).json({ error: 'Post body cannot be empty' });
+  const mediaType = ['image', 'video'].includes(req.body && req.body.mediaType)
+    ? req.body.mediaType
+    : 'none';
+  const mediaUrl =
+    (req.body && (req.body.mediaUrl || req.body.imageUrl)) != null
+      ? String(req.body.mediaUrl || req.body.imageUrl).slice(0, 1000)
+      : null;
+
+  if (!body && !mediaUrl) {
+    return res.status(400).json({ error: 'A post needs text or media' });
+  }
   if (body.length > 500) return res.status(400).json({ error: 'Post is limited to 500 characters' });
 
   const info = db
-    .prepare('INSERT INTO posts (user_id, body, image_url) VALUES (?, ?, ?)')
-    .run(req.user.id, body, imageUrl);
+    .prepare(
+      'INSERT INTO posts (user_id, body, image_url, media_type, media_url) VALUES (?, ?, ?, ?, ?)'
+    )
+    .run(req.user.id, body, mediaType === 'image' ? mediaUrl : null, mediaType, mediaUrl);
   const row = db.prepare(`${POST_SELECT} WHERE p.id = ?`).get(info.lastInsertRowid);
   const post = shape(row, req.user.id);
 
@@ -169,6 +198,40 @@ router.delete('/:id/like', requireAuth, (req, res) => {
   res.json({ liked: false, likeCount: count });
 });
 
+/** POST /api/posts/:id/share — repost to your own timeline */
+router.post('/:id/share', requireAuth, (req, res) => {
+  const original = db.prepare('SELECT * FROM posts WHERE id = ?').get(Number(req.params.id));
+  if (!original) return res.status(404).json({ error: 'Post not found' });
+
+  const note = (req.body && req.body.body ? String(req.body.body) : '').trim().slice(0, 500);
+
+  db.prepare('INSERT INTO shares (user_id, post_id) VALUES (?, ?)').run(req.user.id, original.id);
+  const info = db
+    .prepare(
+      'INSERT INTO posts (user_id, body, media_type, media_url, share_of) VALUES (?, ?, ?, ?, ?)'
+    )
+    .run(req.user.id, note, 'none', null, original.id);
+
+  const row = db.prepare(`${POST_SELECT} WHERE p.id = ?`).get(info.lastInsertRowid);
+  const post = shape(row, req.user.id);
+
+  notify(
+    original.user_id,
+    req.user.id,
+    'share',
+    original.id,
+    `${req.user.display_name} shared your post`
+  );
+  realtime.broadcast('post:new', { post }, { exceptUserId: req.user.id });
+  realtime.emitToUser(original.user_id, 'post:share', {
+    postId: original.id,
+    shareCount: db.prepare('SELECT COUNT(*) AS c FROM shares WHERE post_id = ?').get(original.id).c,
+    sharedBy: { id: req.user.id, username: req.user.username, displayName: req.user.display_name },
+  });
+
+  res.status(201).json({ post });
+});
+
 /** POST /api/posts/:id/bookmark  |  DELETE */
 router.post('/:id/bookmark', requireAuth, (req, res) => {
   const post = db.prepare('SELECT id FROM posts WHERE id = ?').get(Number(req.params.id));
@@ -192,7 +255,7 @@ router.delete('/:id/bookmark', requireAuth, (req, res) => {
 router.get('/:id/comments', (req, res) => {
   const rows = db
     .prepare(
-      `SELECT c.*, u.username, u.display_name, u.avatar_color
+      `SELECT c.*, u.username, u.display_name, u.avatar_color, u.avatar_url
        FROM comments c JOIN users u ON u.id = c.user_id
        WHERE c.post_id = ? ORDER BY c.id ASC LIMIT 200`
     )
@@ -207,6 +270,7 @@ router.get('/:id/comments', (req, res) => {
         username: r.username,
         displayName: r.display_name,
         avatarColor: r.avatar_color,
+        avatarUrl: r.avatar_url || null,
       },
     })),
   });
@@ -232,7 +296,7 @@ router.post('/:id/comments', requireAuth, (req, res) => {
   );
   const row = db
     .prepare(
-      `SELECT c.*, u.username, u.display_name, u.avatar_color
+      `SELECT c.*, u.username, u.display_name, u.avatar_color, u.avatar_url
        FROM comments c JOIN users u ON u.id = c.user_id WHERE c.id = ?`
     )
     .get(info.lastInsertRowid);
@@ -245,6 +309,7 @@ router.post('/:id/comments', requireAuth, (req, res) => {
       username: row.username,
       displayName: row.display_name,
       avatarColor: row.avatar_color,
+      avatarUrl: row.avatar_url || null,
     },
   };
   const commentCount = db
