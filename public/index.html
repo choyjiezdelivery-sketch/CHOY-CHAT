@@ -2,15 +2,16 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>CHOY-CHAT</title>
-<meta name="description" content="CHOY-CHAT — a social media app for sharing moments, following people, and chatting." />
+<meta name="description" content="CHOY-CHAT — newsfeed, messages, groups, friends, live GPS and video calls." />
+<meta name="theme-color" content="#0b0d12" />
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>💬</text></svg>" />
 <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
 
-<!-- ============ AUTH SCREEN ============ -->
+<!-- ==================== AUTH ==================== -->
 <div id="auth-screen" class="auth-screen">
   <div class="auth-card">
     <div class="brand brand-lg">
@@ -20,8 +21,8 @@
     <p class="auth-tagline">Share moments. Follow people. Talk about it.</p>
 
     <div class="tabs" id="auth-tabs">
-      <button class="tab active" data-auth-tab="login">Sign in</button>
-      <button class="tab" data-auth-tab="register">Create account</button>
+      <button class="tab active" data-auth-tab="login" type="button">Sign in</button>
+      <button class="tab" data-auth-tab="register" type="button">Create account</button>
     </div>
 
     <form id="login-form" class="auth-form">
@@ -31,8 +32,7 @@
       <label>Password
         <input name="password" type="password" autocomplete="current-password" required placeholder="••••••••" />
       </label>
-      <button class="btn btn-primary btn-block" type="submit">Sign in</button>
-      <p class="form-error" data-error></p>
+      <button class="btn primary block" type="submit">Sign in</button>
     </form>
 
     <form id="register-form" class="auth-form hidden">
@@ -48,83 +48,90 @@
       <label>Password
         <input name="password" type="password" autocomplete="new-password" required minlength="8" placeholder="At least 8 characters" />
       </label>
-      <button class="btn btn-primary btn-block" type="submit">Create account</button>
-      <p class="form-error" data-error></p>
+      <button class="btn primary block" type="submit">Create account</button>
     </form>
 
+    <p id="auth-error" class="error hidden"></p>
     <p class="auth-demo">Demo account: <code>choy</code> / <code>password123</code></p>
   </div>
 </div>
 
-<!-- ============ APP SHELL ============ -->
+<!-- ==================== APP ==================== -->
 <div id="app" class="app hidden">
   <header class="topbar">
-    <button class="icon-btn menu-btn" id="menu-btn" aria-label="Menu">☰</button>
-    <a class="brand" href="#/home">
+    <button class="icon-btn" id="nav-toggle" aria-label="Menu">☰</button>
+    <a class="brand" href="#/feed">
       <span class="brand-mark">C</span>
       <span class="brand-name">CHOY<span>CHAT</span></span>
     </a>
-    <form class="searchbar" id="search-form">
+    <form class="searchbar" id="global-search">
       <input id="search-input" type="search" placeholder="Search people and posts…" autocomplete="off" />
     </form>
     <div class="topbar-actions">
-      <span class="live-pill" id="live-pill" data-status="offline" title="Realtime connection">
-        <span class="live-dot"></span><span class="live-text">Offline</span>
-      </span>
-      <a class="icon-btn" href="#/notifications" title="Notifications">🔔<span class="badge hidden" id="notif-badge">0</span></a>
-      <a class="icon-btn" href="#/messages" title="Messages">✉️</a>
-      <button class="avatar-btn" id="me-avatar" title="My profile"></button>
+      <span class="pill offline" id="live-pill" title="Realtime connection">Offline</span>
+      <button class="icon-btn" id="notif-btn" title="Notifications">
+        🔔<span class="badge hidden" id="notif-badge">0</span>
+      </button>
+      <button class="avatar-btn" id="me-btn" title="My profile">
+        <span id="me-avatar" class="avatar sm">?</span>
+      </button>
     </div>
   </header>
 
   <div class="layout">
     <nav class="sidebar" id="sidebar">
-      <a class="nav-item" href="#/home" data-nav="home"><span>🏠</span> Home</a>
-      <a class="nav-item" href="#/explore" data-nav="explore"><span>🔍</span> Explore</a>
-      <a class="nav-item" href="#/notifications" data-nav="notifications"><span>🔔</span> Notifications</a>
-      <a class="nav-item" href="#/messages" data-nav="messages"><span>✉️</span> Messages</a>
-      <a class="nav-item" href="#/bookmarks" data-nav="bookmarks"><span>🔖</span> Bookmarks</a>
+      <div class="side-user">
+        <span id="side-avatar" class="avatar sm">?</span>
+        <div class="side-user-text">
+          <strong id="side-name">—</strong>
+          <div id="side-handle" class="muted small">@—</div>
+        </div>
+      </div>
+
+      <a class="nav-item" href="#/feed" data-nav="feed"><span>🏠</span> Newsfeed</a>
+      <a class="nav-item" href="#/messages" data-nav="messages"><span>✉️</span> Messages<span class="badge hidden" id="msg-badge">0</span></a>
+      <a class="nav-item" href="#/groups" data-nav="groups"><span>👥</span> Groups</a>
+      <a class="nav-item" href="#/friends" data-nav="friends"><span>🤝</span> Friends<span class="badge hidden" id="friend-badge">0</span></a>
+      <a class="nav-item" href="#/gps" data-nav="gps"><span>📍</span> Live GPS</a>
+      <a class="nav-item" href="#/video" data-nav="video"><span>🎥</span> Video</a>
+      <a class="nav-item" href="#/profile" data-nav="profile"><span>👤</span> Profile</a>
       <a class="nav-item" href="#/settings" data-nav="settings"><span>⚙️</span> Settings</a>
-      <button class="btn btn-primary btn-block" id="compose-btn">New post</button>
-      <button class="nav-item nav-logout" id="logout-btn"><span>↩</span> Sign out</button>
+      <a class="nav-item admin-only hidden" href="#/admin" data-nav="admin"><span>🛡️</span> Admin</a>
+
+      <button class="nav-item nav-logout" id="logout-btn" type="button"><span>↩</span> Sign out</button>
     </nav>
 
-    <main class="main" id="main"></main>
-
-    <aside class="rail" id="rail"></aside>
+    <main class="content" id="content"></main>
   </div>
 </div>
 
-<!-- ============ COMPOSER MODAL ============ -->
-<div class="modal hidden" id="composer-modal">
-  <div class="modal-card">
-    <div class="modal-head">
-      <h2>New post</h2>
-      <button class="icon-btn" data-close-modal>✕</button>
+<!-- ==================== MODAL ==================== -->
+<div id="modal-root" class="modal-root hidden">
+  <div id="modal-body" class="modal"></div>
+</div>
+
+<!-- ==================== TOASTS ==================== -->
+<div id="toasts" class="toasts"></div>
+
+<!-- ==================== CALL OVERLAY ==================== -->
+<div id="call-overlay" class="call-overlay hidden">
+  <div class="call-card">
+    <div id="call-avatar" class="avatar xl">?</div>
+    <h2 id="call-name">—</h2>
+    <p id="call-status" class="muted">Connecting…</p>
+
+    <div class="call-videos">
+      <video id="call-remote" autoplay playsinline></video>
+      <video id="call-local" autoplay playsinline muted></video>
     </div>
-    <form id="composer-form">
-      <textarea name="body" maxlength="500" rows="5" placeholder="What's happening?" required></textarea>
-      <div class="composer-foot">
-        <span class="counter" id="composer-counter">0 / 500</span>
-        <button class="btn btn-primary" type="submit">Post</button>
-      </div>
-      <p class="form-error" data-error></p>
-    </form>
-  </div>
-</div>
 
-<!-- ============ POST DETAIL MODAL ============ -->
-<div class="modal hidden" id="post-modal">
-  <div class="modal-card modal-wide">
-    <div class="modal-head">
-      <h2>Post</h2>
-      <button class="icon-btn" data-close-modal>✕</button>
+    <div class="call-actions">
+      <button class="btn ghost" id="call-mute" type="button">🎙️ Mute</button>
+      <button class="btn ghost" id="call-cam" type="button">📷 Camera</button>
+      <button class="btn danger" id="call-hangup" type="button">End call</button>
     </div>
-    <div id="post-modal-body"></div>
   </div>
 </div>
-
-<div id="toast" class="toast hidden"></div>
 
 <script src="/realtime.js"></script>
 <script src="/app.js"></script>
