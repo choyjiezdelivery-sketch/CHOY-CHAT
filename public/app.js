@@ -94,6 +94,7 @@ function setSession(token, user) {
   state.me = user;
   localStorage.setItem('choy_token', token);
   showApp();
+  connectRealtime();
   refreshNotifBadge();
   navigate(location.hash.slice(1) || '/home');
 }
@@ -102,6 +103,7 @@ function logout() {
   state.token = null;
   state.me = null;
   localStorage.removeItem('choy_token');
+  if (typeof ChoyRealtime !== 'undefined') ChoyRealtime.disconnect();
   location.hash = '';
   showAuth();
 }
@@ -200,7 +202,7 @@ function postCard(post, opts = {}) {
         <button class="act ${post.liked ? 'liked' : ''}" data-like="${post.id}">
           ${post.liked ? '❤️' : '🤍'} <span data-like-count>${post.likeCount}</span>
         </button>
-        <button class="act" data-open-post="${post.id}">💬 ${post.commentCount}</button>
+        <button class="act" data-open-post="${post.id}">💬 <span data-comment-count>${post.commentCount}</span></button>
         <button class="act ${post.bookmarked ? 'saved' : ''}" data-bookmark="${post.id}">
           ${post.bookmarked ? '🔖' : '📑'}
         </button>
@@ -210,6 +212,9 @@ function postCard(post, opts = {}) {
 }
 
 function bindPostActions(root) {
+  // Guard against double-binding: live updates re-bind the same container.
+  if (root.dataset.bound === '1') return;
+  root.dataset.bound = '1';
   root.addEventListener('click', async (e) => {
     const likeBtn = e.target.closest('[data-like]');
     if (likeBtn) {
@@ -649,6 +654,7 @@ async function pageMessages(main, conversationId) {
         <div class="thread-head">
           ${avatar(data.user, 'sm')}
           <a href="#/u/${esc(data.user.username)}"><b>${esc(data.user.displayName)}</b></a>
+          <span class="online-dot hidden" id="thread-online" data-user-id="${data.user.id}"></span>
         </div>
         <div class="bubbles" id="bubbles">
           ${
@@ -667,6 +673,7 @@ async function pageMessages(main, conversationId) {
               : '<p class="empty">Say hello 👋</p>'
           }
         </div>
+        <div class="typing-indicator hidden" id="typing-indicator"></div>
         <form class="thread-form" id="msg-form">
           <input name="body" maxlength="1000" placeholder="Write a message…" required autocomplete="off" />
           <button class="btn btn-primary" type="submit">Send</button>
@@ -676,16 +683,32 @@ async function pageMessages(main, conversationId) {
     const bubbles = $('#bubbles', thread);
     bubbles.scrollTop = bubbles.scrollHeight;
 
+    const onlineDot = $('#thread-online', thread);
+    if (onlineDot) {
+      onlineDot.classList.toggle('hidden', !live.online.has(Number(data.user.id)));
+    }
+
+    const msgInput = $('#msg-form input', thread);
+    msgInput.addEventListener('input', () => {
+      const now = Date.now();
+      if (now - live.typingSentAt > 1500) {
+        live.typingSentAt = now;
+        ChoyRealtime.typing(conversationId);
+      }
+    });
+
     $('#msg-form', thread).addEventListener('submit', async (e) => {
       e.preventDefault();
       const input = e.currentTarget.querySelector('input');
+      const body = input.value.trim();
+      if (!body) return;
       try {
-        await api(`/messages/${conversationId}`, {
+        const { message } = await api(`/messages/${conversationId}`, {
           method: 'POST',
-          body: JSON.stringify({ body: input.value }),
+          body: JSON.stringify({ body }),
         });
         input.value = '';
-        pageMessages(main, conversationId);
+        appendBubble(message.body, true, message.createdAt);
       } catch (err) {
         toast(err.message);
       }
@@ -872,6 +895,162 @@ async function refreshNotifBadge() {
   }
 }
 
+/* ============================ realtime ============================ */
+
+const live = {
+  online: new Set(),
+  typingSentAt: 0,
+  typingHideTimer: null,
+};
+
+function connectRealtime() {
+  if (!state.token || typeof ChoyRealtime === 'undefined') return;
+  ChoyRealtime.connect(state.token);
+}
+
+function setLivePill(status) {
+  const pill = $('#live-pill');
+  if (!pill) return;
+  pill.dataset.status = status;
+  const text = $('.live-text', pill);
+  if (text) {
+    text.textContent =
+      status === 'online' ? 'Live' : status === 'reconnecting' ? 'Reconnecting…' : 'Offline';
+  }
+}
+
+function currentConversationId() {
+  const { segs } = parseRoute();
+  return segs[0] === 'messages' && segs[1] ? String(segs[1]) : null;
+}
+
+/** Append a chat bubble to the open thread. Returns false when no thread is open. */
+function appendBubble(body, mine, createdAt) {
+  const bubbles = $('#bubbles');
+  if (!bubbles) return false;
+  const empty = $('.empty', bubbles);
+  if (empty) empty.remove();
+
+  const row = document.createElement('div');
+  row.className = 'bubble-row live-in';
+  row.innerHTML = `
+    <div class="bubble ${mine ? 'mine' : ''}">${esc(body)}</div>
+    <div class="bubble-time" style="text-align:${mine ? 'right' : 'left'}">${esc(
+    timeAgo(createdAt)
+  )}</div>`;
+  bubbles.appendChild(row);
+  bubbles.scrollTop = bubbles.scrollHeight;
+  return true;
+}
+
+function bumpPostCounters(postId, patch) {
+  $$(`[data-post-id="${postId}"]`).forEach((card) => {
+    if (patch.likeCount !== undefined) {
+      const el = $('[data-like-count]', card);
+      if (el) el.textContent = patch.likeCount;
+    }
+    if (patch.commentCount !== undefined) {
+      const el = $('[data-comment-count]', card);
+      if (el) el.textContent = patch.commentCount;
+    }
+  });
+}
+
+function showTyping(conversationId, username) {
+  if (currentConversationId() !== String(conversationId)) return;
+  const el = $('#typing-indicator');
+  if (!el) return;
+  el.textContent = `@${username} is typing…`;
+  el.classList.remove('hidden');
+  clearTimeout(live.typingHideTimer);
+  live.typingHideTimer = setTimeout(() => el.classList.add('hidden'), 3000);
+}
+
+function wireRealtime() {
+  if (typeof ChoyRealtime === 'undefined') return;
+
+  ChoyRealtime.on('status', ({ status }) => setLivePill(status));
+
+  ChoyRealtime.on('hello', ({ online }) => {
+    live.online = new Set((online || []).map(Number));
+    setLivePill('online');
+  });
+
+  ChoyRealtime.on('presence', ({ userId, online }) => {
+    if (online) live.online.add(Number(userId));
+    else live.online.delete(Number(userId));
+    const dot = $('#thread-online');
+    if (dot) dot.classList.toggle('hidden', !live.online.has(Number(dot.dataset.userId)));
+  });
+
+  ChoyRealtime.on('message:new', ({ conversationId, message, sender }) => {
+    if (currentConversationId() === String(conversationId)) {
+      appendBubble(message.body, false, message.createdAt);
+      // Mark it read straight away so the unread badge stays honest.
+      api(`/messages/${conversationId}`).catch(() => {});
+    } else {
+      toast(`${sender ? sender.displayName : 'Someone'}: ${message.body.slice(0, 60)}`);
+      if (parseRoute().segs[0] === 'messages') render();
+    }
+  });
+
+  ChoyRealtime.on('message:read', ({ conversationId }) => {
+    if (currentConversationId() === String(conversationId)) {
+      $$('#bubbles .bubble.mine').forEach((b) => b.classList.add('read'));
+    }
+  });
+
+  ChoyRealtime.on('typing', ({ conversationId, username }) =>
+    showTyping(conversationId, username)
+  );
+
+  ChoyRealtime.on('notification:new', ({ notification, unread }) => {
+    state.notifUnread = unread;
+    updateNotifBadge();
+    if (notification && notification.body) toast(notification.body);
+    if (parseRoute().segs[0] === 'notifications') render();
+  });
+
+  ChoyRealtime.on('notification:read', ({ unread }) => {
+    state.notifUnread = unread;
+    updateNotifBadge();
+  });
+
+  ChoyRealtime.on('notification:clear', () => {
+    state.notifUnread = 0;
+    updateNotifBadge();
+  });
+
+  ChoyRealtime.on('post:new', ({ post }) => {
+    const feed = $('#feed');
+    if (!feed || !post) return;
+    const empty = $('.empty', feed);
+    if (empty) empty.remove();
+    const holder = document.createElement('div');
+    holder.innerHTML = postCard(post);
+    const card = holder.firstElementChild;
+    if (!card) return;
+    card.classList.add('live-in');
+    feed.prepend(card);
+  });
+
+  ChoyRealtime.on('post:like', ({ postId, likeCount }) => bumpPostCounters(postId, { likeCount }));
+
+  ChoyRealtime.on('post:comment', ({ postId, commentCount }) =>
+    bumpPostCounters(postId, { commentCount })
+  );
+
+  ChoyRealtime.on('post:deleted', ({ postId }) => {
+    $$(`[data-post-id="${postId}"]`).forEach((card) => card.remove());
+  });
+
+  ChoyRealtime.on('follow:new', ({ follower }) => {
+    if (follower) toast(`@${follower.username} started following you`);
+  });
+
+  setLivePill(ChoyRealtime.getStatus());
+}
+
 /* ============================ render ============================ */
 
 async function render() {
@@ -920,11 +1099,13 @@ document.addEventListener('keydown', (e) => {
 /* ============================ boot ============================ */
 
 (async function boot() {
+  wireRealtime();
   if (!state.token) return showAuth();
   try {
     const { user } = await api('/auth/me');
     state.me = user;
     showApp();
+    connectRealtime();
     render();
   } catch (_err) {
     logout();
