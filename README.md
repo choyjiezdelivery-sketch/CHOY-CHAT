@@ -1,42 +1,3 @@
-# CHOY-CHAT 💬
-
-A full-stack social media app — share posts, follow people, like and comment, bookmark, get notified, and chat one-on-one.
-
-Built with **Node.js + Express + SQLite** on the back end and a **dependency-free vanilla JS single-page app** on the front end. No build step, no bundler — clone it and run it.
-
----
-
-## Features
-
-| Area | What works |
-|---|---|
-| **Accounts** | Register, sign in with username *or* email, JWT sessions, bcrypt-hashed passwords, change password |
-| **Profiles** | Display name, bio, location, website, avatar colour, follower/following/post counts, edit profile |
-| **Posts** | Create (500-char limit), delete your own, timeline of everyone, "Following" feed, post detail view |
-| **Engagement** | Like / unlike, comment (300-char limit), delete your own comments, bookmark / unbookmark |
-| **Social graph** | Follow / unfollow, followers & following lists, "who to follow" suggestions |
-| **Notifications** | Generated on follow, like, comment and new message; unread badge, mark-all-read, clear all |
-| **Direct messages** | Open a conversation from any profile, conversation list with unread counts, message thread, send |
-| **Realtime** | WebSocket push for messages, notifications, likes, comments, follows and new posts — no polling, no refresh |
-| **Presence & typing** | Live online indicator per thread, "is typing…" relay, read receipts on your own bubbles |
-| **Discovery** | Search people and posts, trending posts by like count, explore page |
-| **UI** | Dark theme, responsive (mobile drawer nav), toast feedback, modals, empty states, live connection pill |
-
----
-
-## Quick start
-
-```bash
-git clone https://github.com/choyjiezdelivery-sketch/CHOY-CHAT.git
-cd CHOY-CHAT
-npm install
-cp .env.example .env      # optional — sensible defaults are built in
-npm run seed              # optional — creates demo users and posts
-npm start
-```
-
-Open <http://localhost:3000>.
-
 **Demo accounts** (after `npm run seed`, password `password123`): `choy`, `maya`, `nico`, `lea`
 
 ### Scripts
@@ -46,7 +7,8 @@ Open <http://localhost:3000>.
 | `npm start` | Run the server |
 | `npm run dev` | Run with auto-restart on file change |
 | `npm run seed` | Insert demo users, posts, follows and likes |
-| `npm test` | Run the full test suite (45 tests: 27 API + 18 realtime, in-memory database) |
+| `npm test` | Run the DOM contract check, then the full test suite (45 tests: 27 API + 18 realtime, in-memory database) |
+| `npm run check:dom` | Verify every element id `app.js` looks up exists in the shell or a template |
 
 ---
 
@@ -58,203 +20,89 @@ Copy `.env.example` to `.env`:
 |---|---|---|
 | `PORT` | `3000` | HTTP port |
 | `JWT_SECRET` | dev fallback | **Set this in production** |
-| `DB_PATH` | `data/choy-chat.db` | SQLite file; use `:memory:` for tests |
+| `DATABASE_PATH` | `data/choy.db` | SQLite file location |
+| `UPLOAD_DIR` | `uploads` | Where media files are written |
+| `MAX_UPLOAD_MB` | `25` | Per-file upload limit |
+| `CORS_ORIGIN` | `*` | Allowed origin for the API |
 
 ---
 
-## Project structure
+## API
 
-```
-CHOY-CHAT/
-├── public/                 # front end (served statically)
-│   ├── index.html          # app shell + auth screen
-│   ├── styles.css          # dark theme, responsive
-│   ├── realtime.js         # WebSocket client (auto-reconnect, event bus)
-│   └── app.js              # SPA: router, pages, API client, live handlers
-├── src/
-│   ├── server.js           # Express app + HTTP server shared with the WS hub
-│   ├── db.js               # SQLite connection + schema
-│   ├── auth.js             # JWT signing, auth middleware, user shaping
-│   ├── realtime.js         # WebSocket hub: auth, registry, emit/broadcast
-│   ├── notify.js           # notification insert + live push in one call
-│   ├── seed.js             # demo data
-│   └── routes/
-│       ├── auth.js         # register / login / me
-│       ├── users.js        # profiles, follow, followers, settings
-│       ├── posts.js        # posts, likes, comments, bookmarks
-│       ├── notifications.js
-│       ├── messages.js     # conversations + direct messages
-│       └── search.js       # search + trending
-├── tests/
-│   ├── api.test.js         # end-to-end REST tests
-│   └── realtime.test.js    # WebSocket delivery tests
-└── docs/ROADMAP.md         # what's next
-```
-
----
-
-## API reference
-
-All endpoints are under `/api`. Authenticated routes need `Authorization: Bearer <token>`.
+All routes are under `/api`. Authenticated routes need `Authorization: Bearer <token>`.
 
 ### Auth
 
-| Method | Path | Auth | Description |
-|---|---|---|---|
-| `POST` | `/auth/register` | — | `{username, email, password, displayName?}` → `{token, user}` |
-| `POST` | `/auth/login` | — | `{identifier, password}` (username or email) → `{token, user}` |
-| `GET` | `/auth/me` | ✅ | Current user |
+| Method | Path | Does |
+|---|---|---|
+| `POST` | `/auth/register` | Create an account, returns `{ token, user }` |
+| `POST` | `/auth/login` | Sign in by username **or** email |
+| `GET` | `/auth/me` | Current user |
 
 ### Users
 
-| Method | Path | Auth | Description |
-|---|---|---|---|
-| `GET` | `/users?q=&limit=` | — | List / search users |
-| `GET` | `/users/suggested` | ✅ | People you don't follow yet |
-| `GET` | `/users/:username` | — | Profile with counts and `isFollowing` |
-| `PATCH` | `/users/me` | ✅ | Update displayName, bio, location, website, avatarColor |
-| `POST` | `/users/me/password` | ✅ | `{currentPassword, newPassword}` |
-| `POST` | `/users/:username/follow` | ✅ | Follow |
-| `DELETE` | `/users/:username/follow` | ✅ | Unfollow |
-| `GET` | `/users/:username/followers` | — | Follower list |
-| `GET` | `/users/:username/following` | — | Following list |
+| Method | Path | Does |
+|---|---|---|
+| `GET` | `/users/me` | My profile |
+| `PATCH` | `/users/me` | Update display name, bio, location, website, avatar, cover |
+| `POST` | `/users/me/password` | Change password |
+| `GET` | `/users/:username` | Public profile with counts and relationship state |
+| `GET` | `/users/:username/posts` | That user's posts |
+| `POST` | `/users/:username/follow` | Follow |
+| `DELETE` | `/users/:username/follow` | Unfollow |
 
 ### Posts
 
-| Method | Path | Auth | Description |
-|---|---|---|---|
-| `GET` | `/posts?feed=all\|following&username=&limit=&before=` | — | Timeline / user posts (cursor pagination) |
-| `GET` | `/posts/search?q=` | — | Search post bodies |
-| `GET` | `/posts/bookmarks` | ✅ | Your bookmarked posts |
-| `GET` | `/posts/:id` | — | Single post |
-| `POST` | `/posts` | ✅ | `{body, imageUrl?}` |
-| `DELETE` | `/posts/:id` | ✅ | Delete your own post |
-| `POST` / `DELETE` | `/posts/:id/like` | ✅ | Like / unlike |
-| `POST` / `DELETE` | `/posts/:id/bookmark` | ✅ | Bookmark / unbookmark |
-| `GET` | `/posts/:id/comments` | — | Comments |
-| `POST` | `/posts/:id/comments` | ✅ | `{body}` |
-| `DELETE` | `/posts/:postId/comments/:commentId` | ✅ | Delete your own comment |
-
-### Notifications
-
-| Method | Path | Auth | Description |
-|---|---|---|---|
-| `GET` | `/notifications` | ✅ | List + unread count |
-| `POST` | `/notifications/read` | ✅ | Mark all read |
-| `DELETE` | `/notifications` | ✅ | Clear all |
+| Method | Path | Does |
+|---|---|---|
+| `GET` | `/posts?feed=all\|following&limit=&offset=` | Timeline |
+| `POST` | `/posts` | Create a post (text and/or media) |
+| `DELETE` | `/posts/:id` | Delete your own post |
+| `POST` | `/posts/:id/like` | Like (idempotent) |
+| `DELETE` | `/posts/:id/like` | Unlike |
+| `GET` | `/posts/:id/comments` | List comments |
+| `POST` | `/posts/:id/comments` | Add a comment |
+| `POST` | `/posts/:id/bookmark` | Save |
+| `DELETE` | `/posts/:id/bookmark` | Unsave |
+| `GET` | `/bookmarks` | My saved posts |
 
 ### Messages
 
-| Method | Path | Auth | Description |
-|---|---|---|---|
-| `GET` | `/messages` | ✅ | Conversation list with last message + unread |
-| `POST` | `/messages/open/:username` | ✅ | Open (or create) a conversation → `{conversationId}` |
-| `GET` | `/messages/:conversationId` | ✅ | Thread (marks incoming as read) |
-| `POST` | `/messages/:conversationId` | ✅ | `{body}` |
-
-### Search
-
-| Method | Path | Auth | Description |
-|---|---|---|---|
-| `GET` | `/search?q=` | — | Users + posts in one call |
-| `GET` | `/search/trending` | — | Top posts by like count |
-
-### Misc
-
-| Method | Path | Description |
+| Method | Path | Does |
 |---|---|---|
-| `GET` | `/api/health` | Liveness check, including live realtime connection counts |
+| `GET` | `/messages` | Conversation list with unread counts |
+| `POST` | `/messages/open/:username` | Open (or create) a conversation |
+| `GET` | `/messages/:conversationId` | Thread messages |
+| `POST` | `/messages/:conversationId` | Send a message |
+| `POST` | `/messages/:conversationId/read` | Mark read |
+
+### Other
+
+| Method | Path | Does |
+|---|---|---|
+| `GET` | `/notifications` | List with unread count |
+| `POST` | `/notifications/read` | Mark all read |
+| `GET` | `/search?q=` | Search users and posts |
+| `POST` | `/media/upload` | Multipart upload, returns `{ url, mediaType }` |
+| `GET` | `/health` | Liveness probe |
 
 ---
 
-## Realtime (WebSocket)
+## Realtime
 
-Every signed-in client opens one WebSocket to `ws://<host>/ws`. The REST API and the
-socket share the same port and the same JWT, so there is nothing extra to configure.
+The client opens `ws://<host>/ws?token=<jwt>`. Events are JSON `{ type, ...payload }`.
 
-### Connecting
+**Client → server:** `ping`, `typing`, `read`
 
-Browsers cannot set headers on a WebSocket handshake, so the token is passed as a query
-parameter (a `Bearer` header and a `bearer.<token>` subprotocol are also accepted for
-non-browser clients):
-
-```js
-const ws = new WebSocket(`ws://localhost:3000/ws?token=${encodeURIComponent(token)}`);
-```
-
-A socket without a valid token is rejected during the handshake with `401`.
-
-### Wire format
-
-Every frame in both directions is JSON:
-
-```json
-{ "event": "message:new", "payload": { "...": "..." }, "at": "2026-11-21T11:36:36.637Z" }
-```
-
-### Server → client events
-
-| Event | Payload | Fired when |
-|---|---|---|
-| `hello` | `{userId, username, online[]}` | You connect |
-| `presence` | `{userId, username, online}` | Someone connects or disconnects |
-| `message:new` | `{conversationId, message, sender}` | A DM arrives for you |
-| `message:read` | `{conversationId, readerId}` | The other side opened the thread |
-| `typing` | `{conversationId, userId, username}` | The other side is typing |
-| `notification:new` | `{notification, unread}` | Any notification is created for you |
-| `notification:read` | `{unread}` | Your notifications were marked read |
-| `notification:clear` | `{unread}` | Your notifications were cleared |
-| `post:new` | `{post}` | Someone posted (everyone except the author) |
-| `post:like` | `{postId, likeCount, likedBy}` | Someone liked your post |
-| `post:comment` | `{postId, commentCount, comment}` | Someone commented on your post |
-| `post:deleted` | `{postId}` | A post was deleted |
-| `follow:new` | `{follower, counts}` | Someone followed you |
-| `pong` | `{at}` | Reply to your `ping` |
-| `error` | `{error}` | Malformed frame or unknown event type |
-
-### Client → server events
-
-| Type | Payload | Effect |
-|---|---|---|
-| `ping` | — | Server replies `pong` (keeps intermediaries from idling the socket out) |
-| `typing` | `{conversationId}` | Relayed to the other participant as `typing` |
-
-### Delivery guarantees
-
-- Events go **only** to the people entitled to them: a DM reaches the recipient, a like
-  reaches the post author, and a third party receives nothing. This is covered by tests.
-- Notifications are written to SQLite and pushed in the same call (`src/notify.js`), so the
-  REST list and the live socket can never disagree.
-- The server pings every client every 30s and drops sockets that stop answering.
-- The client reconnects automatically with exponential backoff (1s → 15s) and shows the
-  state in the top-bar pill: **Live**, **Reconnecting…** or **Offline**.
-- Delivery is best-effort, not durable: a client that is offline when an event fires will
-  not receive it on reconnect. The REST endpoints remain the source of truth, so a page
-  load or refresh always shows the current state.
-
----
-
-## Data model
-
-```
-users ──┬── posts ──┬── likes
-        │           ├── comments
-        │           └── bookmarks
-        ├── follows (follower_id → followee_id)
-        ├── notifications (user_id, actor_id, post_id)
-        └── conversations (user_a, user_b) ── messages
-```
-
-SQLite with foreign keys and `ON DELETE CASCADE`, so deleting a user or post cleans up its likes, comments, bookmarks and notifications.
+**Server → client:** `hello`, `presence`, `message:new`, `message:read`, `typing`, `notification:new`, `notification:read`, `post:new`, `post:like`, `post:comment`, `post:deleted`, `follow:new`
 
 ---
 
 ## Security notes
 
-- Passwords are hashed with **bcrypt** (cost 10) and never returned by any endpoint.
-- Sessions are **JWTs** (7-day expiry) sent as a bearer token.
-- Every write endpoint checks ownership: you can only delete your own posts and comments, and only read conversations you belong to.
-- Input is validated server-side (username format, email format, password length, body length limits).
+- Passwords are hashed with bcrypt; tokens are signed JWTs.
+- Every mutating route checks ownership before acting.
+- Conversation access is verified on read and write — a third party cannot open someone else's thread.
 - The front end escapes all user content before rendering, so post bodies cannot inject HTML.
 
 **Before deploying:** set a strong `JWT_SECRET`, serve over HTTPS, and add rate limiting on `/auth/*`.
@@ -268,6 +116,8 @@ npm test
 ```
 
 **45 tests, all passing.**
+
+`npm test` first runs `scripts/check-dom.js`, a static contract check: every `$('#id')` in `public/app.js` must exist either in `public/index.html` or in a template string `app.js` injects. This exists because the UI once broke silently — `app.js` referenced `#auth-error`, the old `index.html` had no such element, and the login submit handler threw before it ever called the API, so signing in did nothing with no visible error. The check now fails the build instead.
 
 `tests/api.test.js` (27) covers registration and validation, login by username and email, auth guards, post creation and deletion permissions, like idempotency, comments, bookmarks, follow/unfollow, the following feed, search, direct messages, conversation access control, profile updates and password changes.
 
