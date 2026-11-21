@@ -1,83 +1,42 @@
-/* CHOY-CHAT — realtime client (WebSocket)
- *
- * A tiny dependency-free wrapper around the browser WebSocket API:
- *   - connects to /ws with the JWT as a query parameter
- *   - auto-reconnects with exponential backoff (1s -> 15s)
- *   - re-emits every server event to registered listeners
- *
- * Usage:
- *   ChoyRealtime.connect(token);
- *   ChoyRealtime.on('message:new', (payload) => { ... });
- *   ChoyRealtime.typing(conversationId);
- */
+/* ==========================================================================
+   CHOY-CHAT — realtime client
+   A thin WebSocket wrapper: auto-reconnect with backoff, an event bus, and a
+   `status` event ('live' | 'connecting' | 'offline') the UI can render.
+   ========================================================================== */
 'use strict';
 
 (function () {
-  const listeners = Object.create(null);
-
+  const listeners = new Map();
   let socket = null;
   let token = null;
   let attempts = 0;
   let reconnectTimer = null;
+  let heartbeatTimer = null;
   let manualClose = false;
-  let status = 'offline';
+
+  const MAX_BACKOFF = 15000;
+
+  function emit(event, payload) {
+    const set = listeners.get(event);
+    if (!set) return;
+    for (const fn of set) {
+      try {
+        fn(payload);
+      } catch (err) {
+        console.error(`[realtime] listener for "${event}" threw:`, err);
+      }
+    }
+  }
 
   function on(event, fn) {
-    if (!listeners[event]) listeners[event] = [];
-    listeners[event].push(fn);
-    return function unsubscribe() {
-      off(event, fn);
-    };
+    if (!listeners.has(event)) listeners.set(event, new Set());
+    listeners.get(event).add(fn);
+    return () => listeners.get(event).delete(fn);
   }
 
-  function off(event, fn) {
-    const arr = listeners[event];
-    if (!arr) return;
-    const i = arr.indexOf(fn);
-    if (i >= 0) arr.splice(i, 1);
-  }
-
-  function fire(event, payload) {
-    const arr = listeners[event];
-    if (arr) {
-      for (const fn of arr.slice()) {
-        try {
-          fn(payload);
-        } catch (err) {
-          console.error('[realtime] handler failed for', event, err);
-        }
-      }
-    }
-    const any = listeners['*'];
-    if (any) {
-      for (const fn of any.slice()) {
-        try {
-          fn({ event, payload });
-        } catch (_err) {
-          /* ignore */
-        }
-      }
-    }
-  }
-
-  function setStatus(next) {
-    if (status === next) return;
-    status = next;
-    fire('status', { status: next });
-  }
-
-  function socketUrl() {
+  function wsUrl() {
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    return `${proto}//${location.host}/ws?token=${encodeURIComponent(token)}`;
-  }
-
-  function scheduleReconnect() {
-    if (manualClose || !token) return;
-    attempts += 1;
-    const delay = Math.min(1000 * Math.pow(1.6, attempts - 1), 15000);
-    setStatus('reconnecting');
-    clearTimeout(reconnectTimer);
-    reconnectTimer = setTimeout(() => connect(), delay);
+    return `${proto}//${location.host}/ws?token=${encodeURIComponent(token || '')}`;
   }
 
   function connect(nextToken) {
@@ -85,96 +44,104 @@
     if (!token) return;
     manualClose = false;
 
-    if (
-      socket &&
-      (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)
-    ) {
+    if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) {
       return;
     }
 
-    clearTimeout(reconnectTimer);
-    setStatus(attempts > 0 ? 'reconnecting' : 'connecting');
+    emit('status', attempts === 0 ? 'connecting' : 'connecting');
 
     try {
-      socket = new WebSocket(socketUrl());
-    } catch (_err) {
-      socket = null;
+      socket = new WebSocket(wsUrl());
+    } catch (err) {
+      emit('status', 'offline');
       scheduleReconnect();
       return;
     }
 
-    socket.onopen = function () {
+    socket.addEventListener('open', () => {
       attempts = 0;
-      setStatus('online');
-      fire('open', {});
-    };
+      emit('status', 'live');
+      startHeartbeat();
+    });
 
-    socket.onmessage = function (ev) {
+    socket.addEventListener('message', (ev) => {
       let msg;
       try {
         msg = JSON.parse(ev.data);
       } catch (_err) {
         return;
       }
-      if (msg && msg.event) fire(msg.event, msg.payload || {});
-    };
+      if (!msg || !msg.event) return;
+      emit(msg.event, msg.payload || {});
+    });
 
-    socket.onclose = function () {
-      socket = null;
-      setStatus('offline');
+    socket.addEventListener('close', () => {
+      stopHeartbeat();
+      emit('status', 'offline');
       if (!manualClose) scheduleReconnect();
-    };
+    });
 
-    socket.onerror = function () {
-      try {
-        if (socket) socket.close();
-      } catch (_err) {
-        /* ignore */
-      }
-    };
+    socket.addEventListener('error', () => {
+      // The close handler does the reconnecting; just surface the state.
+      emit('status', 'offline');
+    });
   }
 
-  function disconnect() {
-    manualClose = true;
-    clearTimeout(reconnectTimer);
-    attempts = 0;
-    if (socket) {
-      try {
-        socket.close();
-      } catch (_err) {
-        /* ignore */
-      }
-    }
-    socket = null;
-    setStatus('offline');
+  function scheduleReconnect() {
+    if (manualClose || reconnectTimer) return;
+    attempts += 1;
+    const delay = Math.min(1000 * Math.pow(2, attempts - 1), MAX_BACKOFF);
+    emit('status', 'connecting');
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
+      connect();
+    }, delay);
   }
 
-  function send(type, data) {
+  function startHeartbeat() {
+    stopHeartbeat();
+    heartbeatTimer = setInterval(() => {
+      send({ type: 'ping' });
+    }, 25000);
+  }
+
+  function stopHeartbeat() {
+    if (heartbeatTimer) clearInterval(heartbeatTimer);
+    heartbeatTimer = null;
+  }
+
+  function send(obj) {
     if (!socket || socket.readyState !== WebSocket.OPEN) return false;
     try {
-      socket.send(JSON.stringify(Object.assign({ type: type }, data || {})));
+      socket.send(JSON.stringify(obj));
       return true;
     } catch (_err) {
       return false;
     }
   }
 
-  function typing(conversationId) {
-    return send('typing', { conversationId: conversationId });
+  function disconnect() {
+    manualClose = true;
+    stopHeartbeat();
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+    if (socket) {
+      try {
+        socket.close();
+      } catch (_err) {
+        /* ignore */
+      }
+      socket = null;
+    }
+    attempts = 0;
+    emit('status', 'offline');
   }
 
-  window.ChoyRealtime = {
-    connect: connect,
-    disconnect: disconnect,
-    on: on,
-    off: off,
-    send: send,
-    typing: typing,
-    getStatus: function () {
-      return status;
-    },
-    isOnline: function () {
-      return status === 'online';
-    },
-  };
+  function isLive() {
+    return !!socket && socket.readyState === WebSocket.OPEN;
+  }
+
+  window.ChoyRealtime = { connect, disconnect, on, send, isLive };
 })();
