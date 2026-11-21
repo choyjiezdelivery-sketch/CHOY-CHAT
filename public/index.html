@@ -1,45 +1,128 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>CHOY-CHAT</title>
-    <meta name="description" content="CHOY-CHAT - a social media app for connecting, sharing and chatting." />
-    <link rel="stylesheet" href="./styles.css" />
-  </head>
-  <body>
-    <header class="topbar">
-      <h1 class="brand">CHOY<span>CHAT</span></h1>
-      <p class="tagline">Connect. Share. Chat.</p>
-    </header>
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>CHOY-CHAT</title>
+<meta name="description" content="CHOY-CHAT — a social media app for sharing moments, following people, and chatting." />
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>💬</text></svg>" />
+<link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
 
-    <main class="layout">
-      <section class="card">
-        <h2>New post</h2>
-        <form id="post-form">
-          <label for="author">Your handle</label>
-          <input id="author" name="author" placeholder="choy" required />
+<!-- ============ AUTH SCREEN ============ -->
+<div id="auth-screen" class="auth-screen">
+  <div class="auth-card">
+    <div class="brand brand-lg">
+      <span class="brand-mark">C</span>
+      <span class="brand-name">CHOY<span>CHAT</span></span>
+    </div>
+    <p class="auth-tagline">Share moments. Follow people. Talk about it.</p>
 
-          <label for="body">What's on your mind?</label>
-          <textarea id="body" name="body" rows="3" placeholder="Say something..." required></textarea>
+    <div class="tabs" id="auth-tabs">
+      <button class="tab active" data-auth-tab="login">Sign in</button>
+      <button class="tab" data-auth-tab="register">Create account</button>
+    </div>
 
-          <button type="submit">Post</button>
-        </form>
-        <p id="form-status" class="status" role="status"></p>
-      </section>
+    <form id="login-form" class="auth-form">
+      <label>Username or email
+        <input name="identifier" type="text" autocomplete="username" required placeholder="choy" />
+      </label>
+      <label>Password
+        <input name="password" type="password" autocomplete="current-password" required placeholder="••••••••" />
+      </label>
+      <button class="btn btn-primary btn-block" type="submit">Sign in</button>
+      <p class="form-error" data-error></p>
+    </form>
 
-      <section class="card">
-        <h2>Feed</h2>
-        <ul id="feed" class="feed">
-          <li class="empty">Loading posts...</li>
-        </ul>
-      </section>
-    </main>
+    <form id="register-form" class="auth-form hidden">
+      <label>Username
+        <input name="username" type="text" autocomplete="username" required placeholder="choy" pattern="[a-zA-Z0-9_]{3,20}" />
+      </label>
+      <label>Display name
+        <input name="displayName" type="text" placeholder="Choy" />
+      </label>
+      <label>Email
+        <input name="email" type="email" autocomplete="email" required placeholder="you@example.com" />
+      </label>
+      <label>Password
+        <input name="password" type="password" autocomplete="new-password" required minlength="8" placeholder="At least 8 characters" />
+      </label>
+      <button class="btn btn-primary btn-block" type="submit">Create account</button>
+      <p class="form-error" data-error></p>
+    </form>
 
-    <footer class="footer">
-      <p>CHOY-CHAT scaffold &middot; <a href="/api/health">API health</a></p>
-    </footer>
+    <p class="auth-demo">Demo account: <code>choy</code> / <code>password123</code></p>
+  </div>
+</div>
 
-    <script src="./app.js" type="module"></script>
-  </body>
+<!-- ============ APP SHELL ============ -->
+<div id="app" class="app hidden">
+  <header class="topbar">
+    <button class="icon-btn menu-btn" id="menu-btn" aria-label="Menu">☰</button>
+    <a class="brand" href="#/home">
+      <span class="brand-mark">C</span>
+      <span class="brand-name">CHOY<span>CHAT</span></span>
+    </a>
+    <form class="searchbar" id="search-form">
+      <input id="search-input" type="search" placeholder="Search people and posts…" autocomplete="off" />
+    </form>
+    <div class="topbar-actions">
+      <a class="icon-btn" href="#/notifications" title="Notifications">🔔<span class="badge hidden" id="notif-badge">0</span></a>
+      <a class="icon-btn" href="#/messages" title="Messages">✉️</a>
+      <button class="avatar-btn" id="me-avatar" title="My profile"></button>
+    </div>
+  </header>
+
+  <div class="layout">
+    <nav class="sidebar" id="sidebar">
+      <a class="nav-item" href="#/home" data-nav="home"><span>🏠</span> Home</a>
+      <a class="nav-item" href="#/explore" data-nav="explore"><span>🔍</span> Explore</a>
+      <a class="nav-item" href="#/notifications" data-nav="notifications"><span>🔔</span> Notifications</a>
+      <a class="nav-item" href="#/messages" data-nav="messages"><span>✉️</span> Messages</a>
+      <a class="nav-item" href="#/bookmarks" data-nav="bookmarks"><span>🔖</span> Bookmarks</a>
+      <a class="nav-item" href="#/settings" data-nav="settings"><span>⚙️</span> Settings</a>
+      <button class="btn btn-primary btn-block" id="compose-btn">New post</button>
+      <button class="nav-item nav-logout" id="logout-btn"><span>↩</span> Sign out</button>
+    </nav>
+
+    <main class="main" id="main"></main>
+
+    <aside class="rail" id="rail"></aside>
+  </div>
+</div>
+
+<!-- ============ COMPOSER MODAL ============ -->
+<div class="modal hidden" id="composer-modal">
+  <div class="modal-card">
+    <div class="modal-head">
+      <h2>New post</h2>
+      <button class="icon-btn" data-close-modal>✕</button>
+    </div>
+    <form id="composer-form">
+      <textarea name="body" maxlength="500" rows="5" placeholder="What's happening?" required></textarea>
+      <div class="composer-foot">
+        <span class="counter" id="composer-counter">0 / 500</span>
+        <button class="btn btn-primary" type="submit">Post</button>
+      </div>
+      <p class="form-error" data-error></p>
+    </form>
+  </div>
+</div>
+
+<!-- ============ POST DETAIL MODAL ============ -->
+<div class="modal hidden" id="post-modal">
+  <div class="modal-card modal-wide">
+    <div class="modal-head">
+      <h2>Post</h2>
+      <button class="icon-btn" data-close-modal>✕</button>
+    </div>
+    <div id="post-modal-body"></div>
+  </div>
+</div>
+
+<div id="toast" class="toast hidden"></div>
+
+<script src="/app.js"></script>
+</body>
 </html>

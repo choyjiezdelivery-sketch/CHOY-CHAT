@@ -1,27 +1,9 @@
-# Dependencies
 node_modules/
-
-# Environment
+data/
+*.db
+*.db-shm
+*.db-wal
 .env
-.env.local
-.env.*.local
-
-# Logs
-logs/
-*.log
-npm-debug.log*
-
-# Build output
-dist/
-build/
-
-# Editor / OS
 .DS_Store
-Thumbs.db
-.idea/
-.vscode/
-*.swp
-
-# Test coverage
+npm-debug.log*
 coverage/
-.nyc_output/

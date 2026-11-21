@@ -1,46 +1,57 @@
-import 'dotenv/config';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+'use strict';
 
-import cors from 'cors';
-import express from 'express';
+require('dotenv').config();
 
-import postsRouter from './routes/posts.js';
-import usersRouter from './routes/users.js';
+const path = require('path');
+const express = require('express');
+const cors = require('cors');
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const publicDir = path.join(__dirname, '..', 'public');
+const { optionalAuth } = require('./auth');
+const authRoutes = require('./routes/auth');
+const { router: userRoutes } = require('./routes/users');
+const { router: postRoutes } = require('./routes/posts');
+const notificationRoutes = require('./routes/notifications');
+const messageRoutes = require('./routes/messages');
+const searchRoutes = require('./routes/search');
 
 const app = express();
-const PORT = Number(process.env.PORT) || 3000;
 
 app.use(cors());
 app.use(express.json({ limit: '1mb' }));
+app.use(optionalAuth);
 
-// --- API -------------------------------------------------------------------
 app.get('/api/health', (_req, res) => {
-  res.json({ status: 'ok', service: 'choy-chat', time: new Date().toISOString() });
+  res.json({ ok: true, app: 'CHOY-CHAT', time: new Date().toISOString() });
 });
 
-app.use('/api/users', usersRouter);
-app.use('/api/posts', postsRouter);
+app.use('/api/auth', authRoutes);
+app.use('/api/users', userRoutes);
+app.use('/api/posts', postRoutes);
+app.use('/api/notifications', notificationRoutes);
+app.use('/api/messages', messageRoutes);
+app.use('/api/search', searchRoutes);
 
-// --- Web client ------------------------------------------------------------
-app.use(express.static(publicDir));
+app.use('/api', (_req, res) => res.status(404).json({ error: 'Endpoint not found' }));
 
-// --- 404 + error handling --------------------------------------------------
-app.use('/api', (_req, res) => {
-  res.status(404).json({ error: 'Not found' });
+app.use(express.static(path.join(__dirname, '..', 'public')));
+
+// SPA fallback for non-API routes
+app.get('*', (_req, res) => {
+  res.sendFile(path.join(__dirname, '..', 'public', 'index.html'));
 });
 
+// eslint-disable-next-line no-unused-vars
 app.use((err, _req, res, _next) => {
-  const status = err.status || 500;
-  if (status >= 500) console.error(err);
-  res.status(status).json({ error: err.message || 'Internal server error' });
+  console.error(err);
+  res.status(err.status || 500).json({ error: err.message || 'Internal server error' });
 });
 
-app.listen(PORT, () => {
-  console.log(`CHOY-CHAT running on http://localhost:${PORT}`);
-});
+const PORT = Number(process.env.PORT) || 3000;
 
-export default app;
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`CHOY-CHAT running on http://localhost:${PORT}`);
+  });
+}
+
+module.exports = app;
