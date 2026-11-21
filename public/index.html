@@ -68,6 +68,9 @@
       <input id="search-input" type="search" placeholder="Search people and posts…" autocomplete="off" />
     </form>
     <div class="topbar-actions">
+      <span class="live-pill" id="live-pill" data-status="offline" title="Realtime connection">
+        <span class="live-dot"></span><span class="live-text">Offline</span>
+      </span>
       <a class="icon-btn" href="#/notifications" title="Notifications">🔔<span class="badge hidden" id="notif-badge">0</span></a>
       <a class="icon-btn" href="#/messages" title="Messages">✉️</a>
       <button class="avatar-btn" id="me-avatar" title="My profile"></button>
@@ -123,6 +126,7 @@
 
 <div id="toast" class="toast hidden"></div>
 
+<script src="/realtime.js"></script>
 <script src="/app.js"></script>
 </body>
 </html>
