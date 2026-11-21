@@ -1,0 +1,49 @@
+# Fly.io config — https://fly.io/docs/reference/configuration/
+#
+# Deploy:  fly launch --no-deploy   (accept this file)
+#          fly volumes create choy_data --size 1
+#          fly secrets set JWT_SECRET=... ADMIN_USERNAME=... ADMIN_PIN=...
+#          fly deploy
+#
+# The volume keeps the SQLite database and uploads across deploys.
+
+app = "choy-chat"
+primary_region = "sin"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  NODE_ENV = "production"
+  PORT = "3000"
+  DB_PATH = "/data/choy-chat.db"
+  UPLOAD_DIR = "/data/uploads"
+  GITHUB_REPO = "choyjiezdelivery-sketch/CHOY-CHAT"
+  GITHUB_BRANCH = "main"
+
+[[mounts]]
+  source = "choy_data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 3000
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+  [http_service.concurrency]
+    type = "connections"
+    hard_limit = 200
+    soft_limit = 150
+
+[[http_service.checks]]
+  interval = "30s"
+  timeout = "5s"
+  grace_period = "15s"
+  method = "GET"
+  path = "/api/ready"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

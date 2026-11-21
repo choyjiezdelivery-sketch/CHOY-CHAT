@@ -1,0 +1,51 @@
+# Render blueprint — https://render.com/docs/blueprint-spec
+#
+# Deploy: push this file, then in Render choose New → Blueprint and pick this
+# repository. Render reads the config below and creates the service.
+#
+# IMPORTANT: the free plan has an ephemeral filesystem, so the SQLite database
+# and uploads are wiped on every deploy and restart. Attach a persistent disk
+# (the `disk:` block below) or use a paid plan with a disk to keep data.
+
+services:
+  - type: web
+    name: choy-chat
+    runtime: node
+    plan: starter
+    region: singapore
+    branch: main
+    buildCommand: npm install && npm run seed
+    startCommand: node src/server.js
+    healthCheckPath: /api/ready
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: JWT_SECRET
+        generateValue: true
+      - key: DB_PATH
+        value: /var/data/choy-chat.db
+      - key: UPLOAD_DIR
+        value: /var/data/uploads
+      - key: ADMIN_USERNAME
+        sync: false
+      - key: ADMIN_PIN
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_BUCKET
+        value: choy-chat-media
+      - key: GITHUB_TOKEN
+        sync: false
+      - key: GITHUB_REPO
+        value: choyjiezdelivery-sketch/CHOY-CHAT
+      - key: GITHUB_BRANCH
+        value: main
+    disk:
+      name: choy-chat-data
+      mountPath: /var/data
+      sizeGB: 1
