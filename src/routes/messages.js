@@ -32,6 +32,8 @@ function shapeMessage(row, viewerId) {
   return {
     id: row.id,
     body: row.body,
+    mediaType: row.media_type || 'none',
+    mediaUrl: row.media_url || null,
     senderId: row.sender_id,
     createdAt: row.created_at,
     mine: row.sender_id === viewerId,
@@ -45,6 +47,7 @@ function publicUserBrief(row) {
     username: row.username,
     displayName: row.display_name,
     avatarColor: row.avatar_color,
+    avatarUrl: row.avatar_url || null,
   };
 }
 
@@ -74,8 +77,14 @@ router.get('/', requireAuth, (req, res) => {
     return {
       id: c.id,
       unread,
+      online: realtime.isOnline(c.other_id),
       lastMessage: last
-        ? { body: last.body, createdAt: last.created_at, senderId: last.sender_id }
+        ? {
+            body: last.body,
+            mediaType: last.media_type || 'none',
+            createdAt: last.created_at,
+            senderId: last.sender_id,
+          }
         : null,
       user: publicUserBrief(other),
     };
@@ -119,7 +128,7 @@ router.get('/:conversationId', requireAuth, (req, res) => {
 
   const rows = db
     .prepare(
-      `SELECT m.*, u.username, u.display_name, u.avatar_color
+      `SELECT m.*, u.username, u.display_name, u.avatar_color, u.avatar_url
        FROM messages m JOIN users u ON u.id = m.sender_id
        WHERE m.conversation_id = ? ORDER BY m.id ASC LIMIT 300`
     )
@@ -130,11 +139,15 @@ router.get('/:conversationId', requireAuth, (req, res) => {
   res.json({
     conversationId: conv.id,
     user: publicUserBrief(other),
+    online: realtime.isOnline(otherParticipant(conv, req.user.id)),
     messages: rows.map((m) => shapeMessage(m, req.user.id)),
   });
 });
 
-/** POST /api/messages/:conversationId — send a message */
+/**
+ * POST /api/messages/:conversationId — send a message
+ * body: { body, mediaType: 'none'|'image'|'video'|'audio'|'link', mediaUrl }
+ */
 router.post('/:conversationId', requireAuth, (req, res) => {
   const conv = db
     .prepare('SELECT * FROM conversations WHERE id = ?')
@@ -143,13 +156,22 @@ router.post('/:conversationId', requireAuth, (req, res) => {
   if (conv.user_a !== req.user.id && conv.user_b !== req.user.id) {
     return res.status(403).json({ error: 'Not your conversation' });
   }
+
   const body = (req.body && req.body.body ? String(req.body.body) : '').trim();
-  if (!body) return res.status(400).json({ error: 'Message cannot be empty' });
+  const mediaType = ['image', 'video', 'audio', 'link'].includes(req.body && req.body.mediaType)
+    ? req.body.mediaType
+    : 'none';
+  const mediaUrl =
+    req.body && req.body.mediaUrl ? String(req.body.mediaUrl).slice(0, 1000) : null;
+
+  if (!body && !mediaUrl) return res.status(400).json({ error: 'Message cannot be empty' });
   if (body.length > 1000) return res.status(400).json({ error: 'Message is limited to 1000 characters' });
 
   const info = db
-    .prepare('INSERT INTO messages (conversation_id, sender_id, body) VALUES (?, ?, ?)')
-    .run(conv.id, req.user.id, body);
+    .prepare(
+      'INSERT INTO messages (conversation_id, sender_id, body, media_type, media_url) VALUES (?, ?, ?, ?, ?)'
+    )
+    .run(conv.id, req.user.id, body, mediaType, mediaUrl);
 
   const otherId = otherParticipant(conv, req.user.id);
   const row = db.prepare('SELECT * FROM messages WHERE id = ?').get(info.lastInsertRowid);
