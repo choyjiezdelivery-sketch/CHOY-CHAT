@@ -17,8 +17,10 @@ Built with **Node.js + Express + SQLite** on the back end and a **dependency-fre
 | **Social graph** | Follow / unfollow, followers & following lists, "who to follow" suggestions |
 | **Notifications** | Generated on follow, like, comment and new message; unread badge, mark-all-read, clear all |
 | **Direct messages** | Open a conversation from any profile, conversation list with unread counts, message thread, send |
+| **Realtime** | WebSocket push for messages, notifications, likes, comments, follows and new posts — no polling, no refresh |
+| **Presence & typing** | Live online indicator per thread, "is typing…" relay, read receipts on your own bubbles |
 | **Discovery** | Search people and posts, trending posts by like count, explore page |
-| **UI** | Dark theme, responsive (mobile drawer nav), toast feedback, modals, empty states |
+| **UI** | Dark theme, responsive (mobile drawer nav), toast feedback, modals, empty states, live connection pill |
 
 ---
 
@@ -44,7 +46,7 @@ Open <http://localhost:3000>.
 | `npm start` | Run the server |
 | `npm run dev` | Run with auto-restart on file change |
 | `npm run seed` | Insert demo users, posts, follows and likes |
-| `npm test` | Run the API test suite (27 tests, in-memory database) |
+| `npm test` | Run the full test suite (45 tests: 27 API + 18 realtime, in-memory database) |
 
 ---
 
@@ -67,11 +69,14 @@ CHOY-CHAT/
 ├── public/                 # front end (served statically)
 │   ├── index.html          # app shell + auth screen
 │   ├── styles.css          # dark theme, responsive
-│   └── app.js              # SPA: router, pages, API client
+│   ├── realtime.js         # WebSocket client (auto-reconnect, event bus)
+│   └── app.js              # SPA: router, pages, API client, live handlers
 ├── src/
-│   ├── server.js           # Express app, middleware, route mounting
+│   ├── server.js           # Express app + HTTP server shared with the WS hub
 │   ├── db.js               # SQLite connection + schema
 │   ├── auth.js             # JWT signing, auth middleware, user shaping
+│   ├── realtime.js         # WebSocket hub: auth, registry, emit/broadcast
+│   ├── notify.js           # notification insert + live push in one call
 │   ├── seed.js             # demo data
 │   └── routes/
 │       ├── auth.js         # register / login / me
@@ -80,7 +85,9 @@ CHOY-CHAT/
 │       ├── notifications.js
 │       ├── messages.js     # conversations + direct messages
 │       └── search.js       # search + trending
-├── tests/api.test.js       # end-to-end API tests
+├── tests/
+│   ├── api.test.js         # end-to-end REST tests
+│   └── realtime.test.js    # WebSocket delivery tests
 └── docs/ROADMAP.md         # what's next
 ```
 
@@ -156,7 +163,74 @@ All endpoints are under `/api`. Authenticated routes need `Authorization: Bearer
 
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/api/health` | Liveness check |
+| `GET` | `/api/health` | Liveness check, including live realtime connection counts |
+
+---
+
+## Realtime (WebSocket)
+
+Every signed-in client opens one WebSocket to `ws://<host>/ws`. The REST API and the
+socket share the same port and the same JWT, so there is nothing extra to configure.
+
+### Connecting
+
+Browsers cannot set headers on a WebSocket handshake, so the token is passed as a query
+parameter (a `Bearer` header and a `bearer.<token>` subprotocol are also accepted for
+non-browser clients):
+
+```js
+const ws = new WebSocket(`ws://localhost:3000/ws?token=${encodeURIComponent(token)}`);
+```
+
+A socket without a valid token is rejected during the handshake with `401`.
+
+### Wire format
+
+Every frame in both directions is JSON:
+
+```json
+{ "event": "message:new", "payload": { "...": "..." }, "at": "2026-11-21T11:36:36.637Z" }
+```
+
+### Server → client events
+
+| Event | Payload | Fired when |
+|---|---|---|
+| `hello` | `{userId, username, online[]}` | You connect |
+| `presence` | `{userId, username, online}` | Someone connects or disconnects |
+| `message:new` | `{conversationId, message, sender}` | A DM arrives for you |
+| `message:read` | `{conversationId, readerId}` | The other side opened the thread |
+| `typing` | `{conversationId, userId, username}` | The other side is typing |
+| `notification:new` | `{notification, unread}` | Any notification is created for you |
+| `notification:read` | `{unread}` | Your notifications were marked read |
+| `notification:clear` | `{unread}` | Your notifications were cleared |
+| `post:new` | `{post}` | Someone posted (everyone except the author) |
+| `post:like` | `{postId, likeCount, likedBy}` | Someone liked your post |
+| `post:comment` | `{postId, commentCount, comment}` | Someone commented on your post |
+| `post:deleted` | `{postId}` | A post was deleted |
+| `follow:new` | `{follower, counts}` | Someone followed you |
+| `pong` | `{at}` | Reply to your `ping` |
+| `error` | `{error}` | Malformed frame or unknown event type |
+
+### Client → server events
+
+| Type | Payload | Effect |
+|---|---|---|
+| `ping` | — | Server replies `pong` (keeps intermediaries from idling the socket out) |
+| `typing` | `{conversationId}` | Relayed to the other participant as `typing` |
+
+### Delivery guarantees
+
+- Events go **only** to the people entitled to them: a DM reaches the recipient, a like
+  reaches the post author, and a third party receives nothing. This is covered by tests.
+- Notifications are written to SQLite and pushed in the same call (`src/notify.js`), so the
+  REST list and the live socket can never disagree.
+- The server pings every client every 30s and drops sockets that stop answering.
+- The client reconnects automatically with exponential backoff (1s → 15s) and shows the
+  state in the top-bar pill: **Live**, **Reconnecting…** or **Offline**.
+- Delivery is best-effort, not durable: a client that is offline when an event fires will
+  not receive it on reconnect. The REST endpoints remain the source of truth, so a page
+  load or refresh always shows the current state.
 
 ---
 
@@ -193,7 +267,11 @@ SQLite with foreign keys and `ON DELETE CASCADE`, so deleting a user or post cle
 npm test
 ```
 
-27 end-to-end tests cover registration and validation, login by username and email, auth guards, post creation and deletion permissions, like idempotency, comments, bookmarks, follow/unfollow, the following feed, search, direct messages, conversation access control, profile updates and password changes.
+**45 tests, all passing.**
+
+`tests/api.test.js` (27) covers registration and validation, login by username and email, auth guards, post creation and deletion permissions, like idempotency, comments, bookmarks, follow/unfollow, the following feed, search, direct messages, conversation access control, profile updates and password changes.
+
+`tests/realtime.test.js` (18) opens real WebSocket clients against a live server and asserts that: unauthenticated and bad-token sockets are rejected; `hello` carries the online list; a DM reaches the recipient and **not** a third party; sending also pushes a notification; reading a thread notifies the sender; typing is relayed; `ping` is answered; a new post is broadcast; a like and a comment each push to the author; a follow pushes to the target; presence is announced; deleting a post broadcasts; marking read pushes `notification:read`; and the hub releases connections on disconnect.
 
 ---
 
