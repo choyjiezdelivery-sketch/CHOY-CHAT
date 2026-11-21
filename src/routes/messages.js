@@ -3,6 +3,8 @@
 const express = require('express');
 const db = require('../db');
 const { requireAuth } = require('../auth');
+const realtime = require('../realtime');
+const { createNotification } = require('../notify');
 
 const router = express.Router();
 
@@ -20,6 +22,30 @@ function findOrCreateConversation(a, b) {
     row = db.prepare('SELECT * FROM conversations WHERE id = ?').get(info.lastInsertRowid);
   }
   return row;
+}
+
+function otherParticipant(conv, meId) {
+  return conv.user_a === meId ? conv.user_b : conv.user_a;
+}
+
+function shapeMessage(row, viewerId) {
+  return {
+    id: row.id,
+    body: row.body,
+    senderId: row.sender_id,
+    createdAt: row.created_at,
+    mine: row.sender_id === viewerId,
+  };
+}
+
+function publicUserBrief(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    username: row.username,
+    displayName: row.display_name,
+    avatarColor: row.avatar_color,
+  };
 }
 
 /** GET /api/messages — conversation list with last message + unread count */
@@ -51,14 +77,7 @@ router.get('/', requireAuth, (req, res) => {
       lastMessage: last
         ? { body: last.body, createdAt: last.created_at, senderId: last.sender_id }
         : null,
-      user: other
-        ? {
-            id: other.id,
-            username: other.username,
-            displayName: other.display_name,
-            avatarColor: other.avatar_color,
-          }
-        : null,
+      user: publicUserBrief(other),
     };
   });
 
@@ -85,9 +104,18 @@ router.get('/:conversationId', requireAuth, (req, res) => {
   if (conv.user_a !== req.user.id && conv.user_b !== req.user.id) {
     return res.status(403).json({ error: 'Not your conversation' });
   }
-  db.prepare(
-    'UPDATE messages SET is_read = 1 WHERE conversation_id = ? AND sender_id != ?'
-  ).run(conv.id, req.user.id);
+
+  const marked = db
+    .prepare('UPDATE messages SET is_read = 1 WHERE conversation_id = ? AND sender_id != ? AND is_read = 0')
+    .run(conv.id, req.user.id);
+
+  // Tell the other side their messages were just read.
+  if (marked.changes > 0) {
+    realtime.emitToUser(otherParticipant(conv, req.user.id), 'message:read', {
+      conversationId: conv.id,
+      readerId: req.user.id,
+    });
+  }
 
   const rows = db
     .prepare(
@@ -97,26 +125,12 @@ router.get('/:conversationId', requireAuth, (req, res) => {
     )
     .all(conv.id);
 
-  const otherId = conv.user_a === req.user.id ? conv.user_b : conv.user_a;
-  const other = db.prepare('SELECT * FROM users WHERE id = ?').get(otherId);
+  const other = db.prepare('SELECT * FROM users WHERE id = ?').get(otherParticipant(conv, req.user.id));
 
   res.json({
     conversationId: conv.id,
-    user: other
-      ? {
-          id: other.id,
-          username: other.username,
-          displayName: other.display_name,
-          avatarColor: other.avatar_color,
-        }
-      : null,
-    messages: rows.map((m) => ({
-      id: m.id,
-      body: m.body,
-      senderId: m.sender_id,
-      createdAt: m.created_at,
-      mine: m.sender_id === req.user.id,
-    })),
+    user: publicUserBrief(other),
+    messages: rows.map((m) => shapeMessage(m, req.user.id)),
   });
 });
 
@@ -137,21 +151,24 @@ router.post('/:conversationId', requireAuth, (req, res) => {
     .prepare('INSERT INTO messages (conversation_id, sender_id, body) VALUES (?, ?, ?)')
     .run(conv.id, req.user.id, body);
 
-  const otherId = conv.user_a === req.user.id ? conv.user_b : conv.user_a;
-  db.prepare(
-    `INSERT INTO notifications (user_id, actor_id, type, body) VALUES (?, ?, 'message', ?)`
-  ).run(otherId, req.user.id, `${req.user.display_name} sent you a message`);
-
+  const otherId = otherParticipant(conv, req.user.id);
   const row = db.prepare('SELECT * FROM messages WHERE id = ?').get(info.lastInsertRowid);
-  res.status(201).json({
-    message: {
-      id: row.id,
-      body: row.body,
-      senderId: row.sender_id,
-      createdAt: row.created_at,
-      mine: true,
-    },
+
+  // Live delivery: the recipient's open thread appends this immediately.
+  realtime.emitToUser(otherId, 'message:new', {
+    conversationId: conv.id,
+    message: shapeMessage(row, otherId),
+    sender: publicUserBrief(req.user),
   });
+
+  createNotification({
+    userId: otherId,
+    actorId: req.user.id,
+    type: 'message',
+    body: `${req.user.display_name} sent you a message`,
+  });
+
+  res.status(201).json({ message: shapeMessage(row, req.user.id) });
 });
 
 module.exports = router;

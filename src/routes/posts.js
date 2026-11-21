@@ -3,6 +3,8 @@
 const express = require('express');
 const db = require('../db');
 const { requireAuth } = require('../auth');
+const realtime = require('../realtime');
+const { createNotification } = require('../notify');
 
 const router = express.Router();
 
@@ -41,11 +43,9 @@ function shape(row, viewerId) {
   };
 }
 
+/** Writes the notification row and pushes it over the realtime hub. */
 function notify(userId, actorId, type, postId, body) {
-  if (userId === actorId) return;
-  db.prepare(
-    `INSERT INTO notifications (user_id, actor_id, type, post_id, body) VALUES (?, ?, ?, ?, ?)`
-  ).run(userId, actorId, type, postId, body);
+  return createNotification({ userId, actorId, type, postId, body });
 }
 
 /** GET /api/posts?feed=following|all&username=&limit=&before= */
@@ -121,7 +121,12 @@ router.post('/', requireAuth, (req, res) => {
     .prepare('INSERT INTO posts (user_id, body, image_url) VALUES (?, ?, ?)')
     .run(req.user.id, body, imageUrl);
   const row = db.prepare(`${POST_SELECT} WHERE p.id = ?`).get(info.lastInsertRowid);
-  res.status(201).json({ post: shape(row, req.user.id) });
+  const post = shape(row, req.user.id);
+
+  // Live timeline: everyone else sees the new post without refreshing.
+  realtime.broadcast('post:new', { post }, { exceptUserId: req.user.id });
+
+  res.status(201).json({ post });
 });
 
 /** DELETE /api/posts/:id */
@@ -130,6 +135,7 @@ router.delete('/:id', requireAuth, (req, res) => {
   if (!row) return res.status(404).json({ error: 'Post not found' });
   if (row.user_id !== req.user.id) return res.status(403).json({ error: 'Not your post' });
   db.prepare('DELETE FROM posts WHERE id = ?').run(row.id);
+  realtime.broadcast('post:deleted', { postId: row.id });
   res.json({ ok: true });
 });
 
@@ -143,6 +149,15 @@ router.post('/:id/like', requireAuth, (req, res) => {
   );
   notify(post.user_id, req.user.id, 'like', post.id, `${req.user.display_name} liked your post`);
   const count = db.prepare('SELECT COUNT(*) AS c FROM likes WHERE post_id = ?').get(post.id).c;
+  realtime.emitToUser(post.user_id, 'post:like', {
+    postId: post.id,
+    likeCount: count,
+    likedBy: {
+      id: req.user.id,
+      username: req.user.username,
+      displayName: req.user.display_name,
+    },
+  });
   res.json({ liked: true, likeCount: count });
 });
 
@@ -221,19 +236,26 @@ router.post('/:id/comments', requireAuth, (req, res) => {
        FROM comments c JOIN users u ON u.id = c.user_id WHERE c.id = ?`
     )
     .get(info.lastInsertRowid);
-  res.status(201).json({
-    comment: {
-      id: row.id,
-      body: row.body,
-      createdAt: row.created_at,
-      author: {
-        id: row.user_id,
-        username: row.username,
-        displayName: row.display_name,
-        avatarColor: row.avatar_color,
-      },
+  const comment = {
+    id: row.id,
+    body: row.body,
+    createdAt: row.created_at,
+    author: {
+      id: row.user_id,
+      username: row.username,
+      displayName: row.display_name,
+      avatarColor: row.avatar_color,
     },
+  };
+  const commentCount = db
+    .prepare('SELECT COUNT(*) AS c FROM comments WHERE post_id = ?')
+    .get(post.id).c;
+  realtime.emitToUser(post.user_id, 'post:comment', {
+    postId: post.id,
+    commentCount,
+    comment,
   });
+  res.status(201).json({ comment });
 });
 
 /** DELETE /api/posts/:postId/comments/:commentId */

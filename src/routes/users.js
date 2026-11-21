@@ -4,6 +4,8 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const db = require('../db');
 const { publicUser, requireAuth } = require('../auth');
+const realtime = require('../realtime');
+const { createNotification } = require('../notify');
 
 const router = express.Router();
 
@@ -126,11 +128,25 @@ router.post('/:username/follow', requireAuth, (req, res) => {
     req.user.id,
     target.id
   );
-  db.prepare(
-    `INSERT INTO notifications (user_id, actor_id, type, body) VALUES (?, ?, 'follow', ?)`
-  ).run(target.id, req.user.id, `${req.user.display_name} started following you`);
+  createNotification({
+    userId: target.id,
+    actorId: req.user.id,
+    type: 'follow',
+    body: `${req.user.display_name} started following you`,
+  });
 
-  res.json({ following: true, counts: countsFor(target.id) });
+  const counts = countsFor(target.id);
+  realtime.emitToUser(target.id, 'follow:new', {
+    follower: {
+      id: req.user.id,
+      username: req.user.username,
+      displayName: req.user.display_name,
+      avatarColor: req.user.avatar_color,
+    },
+    counts,
+  });
+
+  res.json({ following: true, counts });
 });
 
 router.delete('/:username/follow', requireAuth, (req, res) => {

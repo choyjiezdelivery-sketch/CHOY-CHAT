@@ -3,10 +3,12 @@
 require('dotenv').config();
 
 const path = require('path');
+const http = require('http');
 const express = require('express');
 const cors = require('cors');
 
 const { optionalAuth } = require('./auth');
+const realtime = require('./realtime');
 const authRoutes = require('./routes/auth');
 const { router: userRoutes } = require('./routes/users');
 const { router: postRoutes } = require('./routes/posts');
@@ -21,7 +23,16 @@ app.use(express.json({ limit: '1mb' }));
 app.use(optionalAuth);
 
 app.get('/api/health', (_req, res) => {
-  res.json({ ok: true, app: 'CHOY-CHAT', time: new Date().toISOString() });
+  res.json({
+    ok: true,
+    app: 'CHOY-CHAT',
+    time: new Date().toISOString(),
+    realtime: {
+      path: realtime.WS_PATH,
+      connections: realtime.connectionCount(),
+      online: realtime.onlineUserIds().length,
+    },
+  });
 });
 
 app.use('/api/auth', authRoutes);
@@ -48,10 +59,18 @@ app.use((err, _req, res, _next) => {
 
 const PORT = Number(process.env.PORT) || 3000;
 
+// The HTTP server is created explicitly so the WebSocket hub can share the
+// same port: REST on /api/*, realtime on /ws.
+const server = http.createServer(app);
+realtime.attachRealtime(server);
+
 if (require.main === module) {
-  app.listen(PORT, () => {
+  server.listen(PORT, () => {
     console.log(`CHOY-CHAT running on http://localhost:${PORT}`);
+    console.log(`Realtime WebSocket listening on ws://localhost:${PORT}${realtime.WS_PATH}`);
   });
 }
 
 module.exports = app;
+module.exports.server = server;
+module.exports.realtime = realtime;
