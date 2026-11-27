@@ -45,28 +45,11 @@ app.use(optionalAuth);
 /* --------------------------------------------------------------- bootstrap */
 
 /**
- * Promote ADMIN_USERNAME to admin on boot, and store ADMIN_PIN if given.
- * This is how the very first admin is created without a manual DB edit.
+ * First-run bootstrap: seeds demo data only when the database is empty, then
+ * makes sure ADMIN_USERNAME exists and is an admin. Idempotent, so a redeploy
+ * against a persistent disk never touches existing data.
  */
-function bootstrapAdmin() {
-  const username = (process.env.ADMIN_USERNAME || '').trim().toLowerCase();
-  if (username) {
-    const row = db.prepare('SELECT * FROM users WHERE username = ?').get(username);
-    if (row && row.role !== 'admin') {
-      db.prepare("UPDATE users SET role = 'admin' WHERE id = ?").run(row.id);
-      console.log(`[bootstrap] @${username} promoted to admin`);
-    }
-  }
-  const pin = process.env.ADMIN_PIN;
-  if (pin && /^\d{4,8}$/.test(String(pin))) {
-    const { hashPin } = require('./auth');
-    db.prepare(
-      `INSERT INTO settings (key, value, is_secret, updated_at)
-       VALUES ('ADMIN_PIN', ?, 1, datetime('now'))
-       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')`
-    ).run(hashPin(String(pin)));
-  }
-}
+const { bootstrap: runBootstrap } = require('./bootstrap');
 
 /* ------------------------------------------------------------------ routes */
 
@@ -169,7 +152,7 @@ realtime.attachRealtime(server);
 
 if (require.main === module) {
   assertProductionSecrets();
-  bootstrapAdmin();
+  runBootstrap();
   server.listen(PORT, '0.0.0.0', () => {
     console.log(`CHOY-CHAT running on http://localhost:${PORT}`);
     console.log(`Realtime WebSocket listening on ws://localhost:${PORT}${realtime.WS_PATH}`);
@@ -201,4 +184,4 @@ if (require.main === module) {
 module.exports = app;
 module.exports.server = server;
 module.exports.realtime = realtime;
-module.exports.bootstrapAdmin = bootstrapAdmin;
+module.exports.bootstrapAdmin = runBootstrap;

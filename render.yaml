@@ -3,9 +3,16 @@
 # Deploy: push this file, then in Render choose New → Blueprint and pick this
 # repository. Render reads the config below and creates the service.
 #
-# IMPORTANT: the free plan has an ephemeral filesystem, so the SQLite database
-# and uploads are wiped on every deploy and restart. Attach a persistent disk
-# (the `disk:` block below) or use a paid plan with a disk to keep data.
+# Two things here are deliberate and should not be "simplified":
+#
+# 1. The build command does NOT run `npm run seed`. Render's build step runs
+#    before the persistent disk is mounted, so a seed there writes to a
+#    throwaway path — and seed.js deletes and recreates every user, which would
+#    wipe real accounts on each deploy. Seeding now happens at start time in
+#    src/bootstrap.js, and only when the database is empty.
+#
+# 2. The disk is required. Without it the SQLite database and uploads live on
+#    the ephemeral filesystem and are lost on every deploy and restart.
 
 services:
   - type: web
@@ -14,7 +21,7 @@ services:
     plan: starter
     region: singapore
     branch: main
-    buildCommand: npm install && npm run seed
+    buildCommand: npm install
     startCommand: node src/server.js
     healthCheckPath: /api/ready
     autoDeploy: true
@@ -27,10 +34,19 @@ services:
         value: /var/data/choy-chat.db
       - key: UPLOAD_DIR
         value: /var/data/uploads
+      # Admin account. ADMIN_USERNAME is the login name; ADMIN_PASSWORD is only
+      # used the first time that account is created — changing it later does not
+      # reset an existing password. ADMIN_PIN (4-8 digits) is optional and adds
+      # a second factor to the admin dashboard.
       - key: ADMIN_USERNAME
+        value: choy
+      - key: ADMIN_PASSWORD
         sync: false
       - key: ADMIN_PIN
         sync: false
+      # Set to false for a clean production database with no demo posts.
+      - key: BOOTSTRAP_DEMO_DATA
+        value: "true"
       - key: SUPABASE_URL
         sync: false
       - key: SUPABASE_SERVICE_ROLE_KEY
